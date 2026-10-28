@@ -359,7 +359,7 @@ const licenseFailureStrikes = new Map();
 
 const CONFIG = {
     PORT: Number(process.env.PORT || 8000),
-    HOST: process.env.HOST || '127.0.0.1',
+    HOST: process.env.HOST || '0.0.0.0',
     SERVER_SECRET: process.env.SERVER_SECRET || crypto.randomBytes(32).toString('hex'),
     ADMIN_KEY: process.env.ADMIN_KEY || null, // REQUIRED - no default for security
     RELEASE_REGISTRATION_TOKEN: process.env.RELEASE_REGISTRATION_TOKEN || null,
@@ -3983,7 +3983,15 @@ app.use('/transcripts', express.static(TRANSCRIPTS_DIR));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 app.use(express.static(PUBLIC_DIR, { index: 'index.html', maxAge: IS_PRODUCTION ? '1h' : 0 }));
 app.get('/', (req, res) => {
-    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+    const indexPath = path.join(PUBLIC_DIR, 'index.html');
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.json({ status: 'ok', server: '777 Auth Server v1.0.0', operational: true });
+    }
+});
+app.get(['/health', '/healthz'], (req, res) => {
+    res.json({ status: 'healthy', uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
 
 if (IS_PRODUCTION) {
