@@ -42,7 +42,8 @@ async function loadLicensesFromSupabase() {
         const map = new Map();
         if (Array.isArray(data)) {
             for (const row of data) {
-                map.set(row.license_key, {
+                const cleanKey = (row.license_key || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+                map.set(cleanKey, {
                     hwid: row.hwid || null,
                     type: row.type || 'lifetime_premium',
                     active: row.active !== false,
@@ -56,6 +57,30 @@ async function loadLicensesFromSupabase() {
         return map;
     } catch (e) {
         console.error('[777 Auth] Error querying Supabase:', e.message);
+        return null;
+    }
+}
+
+async function fetchSingleLicense(licenseKey) {
+    if (!client || !licenseKey) return null;
+    const cleanKey = String(licenseKey).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    try {
+        const { data, error } = await client
+            .from(tableName)
+            .select('*')
+            .or(`license_key.eq.${licenseKey},license_key.eq.${cleanKey}`)
+            .limit(1);
+        if (error || !data || data.length === 0) return null;
+        const row = data[0];
+        return {
+            hwid: row.hwid || null,
+            type: row.type || 'lifetime_premium',
+            active: row.active !== false,
+            discordId: row.discord_id || null,
+            notes: row.notes || '',
+            expiresAt: row.expires_at || null
+        };
+    } catch (e) {
         return null;
     }
 }
@@ -117,6 +142,7 @@ async function syncAllToSupabase(licensesMap) {
 module.exports = {
     isConfigured: () => client !== null,
     loadLicensesFromSupabase,
+    fetchSingleLicense,
     saveLicenseToSupabase,
     syncAllToSupabase
 };

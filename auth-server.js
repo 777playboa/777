@@ -166,8 +166,24 @@ function loadLicensesFromDisk(clearExisting) {
     }
 }
 
+const DEFAULT_DEMO_KEY = 'AA777777TESTDEMO2026';
+
+function ensureDefaultDemoLicense() {
+    if (!licenses.has(DEFAULT_DEMO_KEY)) {
+        licenses.set(DEFAULT_DEMO_KEY, normalizeLicenseRecord({
+            licenseType: 'lifetime_premium',
+            expiresAt: null,
+            hwid: null,
+            active: true,
+            note: 'Default Demo Key for Client 777'
+        }));
+        console.log('[777 Auth] Seeded default demo key: AA77-7777-TEST-DEMO-2026 (unbound)');
+    }
+}
+
 function loadLicenses() {
     loadLicensesFromDisk(true);
+    ensureDefaultDemoLicense();
     if (supabaseAdapter.isConfigured()) {
         supabaseAdapter.loadLicensesFromSupabase().then(dbLicenses => {
             if (dbLicenses && dbLicenses.size > 0) {
@@ -179,6 +195,7 @@ function loadLicenses() {
                 // If Supabase table is empty but local licenses exist, seed Supabase!
                 supabaseAdapter.syncAllToSupabase(licenses);
             }
+            ensureDefaultDemoLicense();
         }).catch(err => {
             console.error('[777 Auth] Failed to sync with Supabase on boot:', err.message);
         });
@@ -2078,7 +2095,7 @@ app.get('/v1/challenge', (req, res) => {
     });
 });
 
-app.post('/v1/auth', (req, res) => {
+app.post('/v1/auth', async (req, res) => {
     refreshBlacklistIfFileChanged();
     const clientKey = `${clientIp(req)}:auth`;
     if (isRateLimited(clientKey, CONFIG.AUTH_RATE_LIMIT)) {
@@ -2187,7 +2204,19 @@ app.post('/v1/auth', (req, res) => {
     }
 
     refreshLicensesIfFileChanged();
-    const licenseEntry = getLicenseEntry(license);
+    let licenseEntry = getLicenseEntry(license);
+    if (!licenseEntry && supabaseAdapter.isConfigured()) {
+        try {
+            const dbLic = await supabaseAdapter.fetchSingleLicense(license);
+            if (dbLic) {
+                const norm = normalizeLicenseKey(license);
+                licenses.set(norm, normalizeLicenseRecord(dbLic));
+                licenseEntry = { key: norm, data: licenses.get(norm) };
+            }
+        } catch (e) {
+            console.error('[777 Auth] Dynamic Supabase license lookup failed:', e.message);
+        }
+    }
     if (!licenseEntry) {
 
         const blCtx = buildBlacklistCtx({
