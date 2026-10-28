@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: 777-auth
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node auth-server.js
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: REQUIRE_HEARTBEAT_PROOF
+        value: "false"
