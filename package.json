@@ -1,0 +1,21 @@
+{
+  "name": "777-auth-server",
+  "version": "1.0.0",
+  "description": "777 Auth Server - Authentication and Licensing for Client 777 and Loader",
+  "main": "auth-server.js",
+  "scripts": {
+    "start": "node auth-server.js",
+    "dev": "nodemon auth-server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
+    "better-sqlite3": "^11.8.1",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
