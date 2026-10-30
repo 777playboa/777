@@ -169,16 +169,14 @@ function loadLicensesFromDisk(clearExisting) {
 const DEFAULT_DEMO_KEY = 'AA777777TESTDEMO2026';
 
 function ensureDefaultDemoLicense() {
-    if (!licenses.has(DEFAULT_DEMO_KEY)) {
-        licenses.set(DEFAULT_DEMO_KEY, normalizeLicenseRecord({
-            licenseType: 'lifetime_premium',
-            expiresAt: null,
-            hwid: null,
-            active: true,
-            note: 'Default Demo Key for Client 777'
-        }));
-        console.log('[777 Auth] Seeded default demo key: AA77-7777-TEST-DEMO-2026 (unbound)');
-    }
+    licenses.set(DEFAULT_DEMO_KEY, normalizeLicenseRecord({
+        licenseType: 'lifetime_premium',
+        expiresAt: null,
+        hwid: null,
+        active: true,
+        note: 'Default Demo Key for Client 777'
+    }));
+    console.log('[777 Auth] Seeded default demo key: AA77-7777-TEST-DEMO-2026 (unbound)');
 }
 
 function loadLicenses() {
@@ -1848,7 +1846,7 @@ function sanitizeHwid(hwid) {
 }
 
 // HWID-first auth - check if HWID is already registered
-app.post('/v1/auth/hwid', (req, res) => {
+app.post('/v1/auth/hwid', async (req, res) => {
     refreshBlacklistIfFileChanged();
     const clientKey = `${clientIp(req)}:hwid`;
     if (isRateLimited(clientKey, CONFIG.AUTH_RATE_LIMIT)) {
@@ -1933,6 +1931,23 @@ app.post('/v1/auth/hwid', (req, res) => {
                 canonicalizeLicenseHwid(licenseData, hwid);
                 break;
             }
+        }
+    }
+    if (!foundLicenseKey && supabaseAdapter.isConfigured()) {
+        try {
+            const dbMap = await supabaseAdapter.loadLicensesFromSupabase();
+            if (dbMap) {
+                for (const [k, v] of dbMap.entries()) {
+                    licenses.set(k, normalizeLicenseRecord(v));
+                    if (licenseHwidMatches(v.hwid, hwid) && !licenseIsExpired(v) && v.active !== false) {
+                        foundLicenseKey = k;
+                        licenseData = licenses.get(k);
+                        break;
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('[777 Auth] Failed to check HWID against Supabase:', e.message);
         }
     }
     if (!foundLicenseKey) {
@@ -2057,6 +2072,11 @@ app.post('/v1/auth/hwid', (req, res) => {
     });
     clearLicenseFailureStrikes(normalizedHwid);
     saveLicenses();
+    if (supabaseAdapter.isConfigured() && resolvedLicenseKey !== DEFAULT_DEMO_KEY) {
+        supabaseAdapter.saveLicenseToSupabase(resolvedLicenseKey, licenseData).catch((err) => {
+            console.error('[777 Auth] Failed to sync bound license to Supabase:', err.message);
+        });
+    }
     enforceConcurrentSessionCap(foundLicenseKey, sessionToken);
 
     console.log('[Auth] Login OK (HWID auto):', mcUsername || licenseData.mcUsername,
@@ -2321,14 +2341,16 @@ app.post('/v1/auth', async (req, res) => {
         });
     }
 
-    const guidCheck = enforceMachineGuidBinding(licenseData, machineGuid);
-    if (!guidCheck.ok) {
-        punishCrack('🚨 LICENSE / MACHINE MISMATCH (license login)', {
-            licenseKey: resolvedLicenseKey, licenseData, rawHwid: hwid, normalizedHwid, req,
-            mcUsername, mcUuid, osVersion, discordUsername, discordId, windowsName, pcName,
-            extra: 'MachineGuid does not match license record'
-        });
-        return pcBoundDeniedResponse(res);
+    if (resolvedLicenseKey !== DEFAULT_DEMO_KEY) {
+        const guidCheck = enforceMachineGuidBinding(licenseData, machineGuid);
+        if (!guidCheck.ok) {
+            punishCrack('🚨 LICENSE / MACHINE MISMATCH (license login)', {
+                licenseKey: resolvedLicenseKey, licenseData, rawHwid: hwid, normalizedHwid, req,
+                mcUsername, mcUuid, osVersion, discordUsername, discordId, windowsName, pcName,
+                extra: 'MachineGuid does not match license record'
+            });
+            return pcBoundDeniedResponse(res);
+        }
     }
 
     if (!licenseAllowsJar(licenseData, jarHash)) {
@@ -2359,7 +2381,7 @@ app.post('/v1/auth', async (req, res) => {
         }));
     }
 
-    if (licenseData.hwid && !licenseHwidMatches(licenseData.hwid, hwid)) {
+    if (resolvedLicenseKey !== DEFAULT_DEMO_KEY && licenseData.hwid && !licenseHwidMatches(licenseData.hwid, hwid)) {
         if (sameWindowsInstall(licenseData.machineGuid, hwid, machineGuid)) {
             rememberSameInstallHwidDrift(licenseData, hwid);
             console.log('[Auth] License login: same MachineGuid, NIC/HWID drift — not a PC change');
@@ -2465,6 +2487,11 @@ app.post('/v1/auth', async (req, res) => {
     });
     clearLicenseFailureStrikes(normalizedHwid);
     saveLicenses();
+    if (supabaseAdapter.isConfigured() && resolvedLicenseKey !== DEFAULT_DEMO_KEY) {
+        supabaseAdapter.saveLicenseToSupabase(resolvedLicenseKey, licenseData).catch((err) => {
+            console.error('[777 Auth] Failed to sync bound license to Supabase:', err.message);
+        });
+    }
     enforceConcurrentSessionCap(resolvedLicenseKey, sessionToken);
     const mcUser = mcUsername || licenseData.mcUsername || 'Unknown';
     console.log('[Auth] Login OK (license):', mcUser, sensitiveFingerprint(resolvedLicenseKey));

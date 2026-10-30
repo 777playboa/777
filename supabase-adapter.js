@@ -63,14 +63,22 @@ async function loadLicensesFromSupabase() {
 
 async function fetchSingleLicense(licenseKey) {
     if (!client || !licenseKey) return null;
-    const cleanKey = String(licenseKey).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const raw = String(licenseKey).trim();
+    const cleanKey = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const formattedKey = cleanKey.length === 20
+        ? `${cleanKey.slice(0, 4)}-${cleanKey.slice(4, 8)}-${cleanKey.slice(8, 12)}-${cleanKey.slice(12, 16)}-${cleanKey.slice(16, 20)}`
+        : cleanKey;
     try {
         const { data, error } = await client
             .from(tableName)
             .select('*')
-            .or(`license_key.eq.${licenseKey},license_key.eq.${cleanKey}`)
+            .or(`license_key.eq.${raw},license_key.eq.${cleanKey},license_key.eq.${formattedKey},license_key.ilike.${cleanKey},license_key.ilike.${formattedKey}`)
             .limit(1);
-        if (error || !data || data.length === 0) return null;
+        if (error) {
+            console.error('[777 Auth] Supabase fetchSingleLicense error:', error.message);
+            return null;
+        }
+        if (!data || data.length === 0) return null;
         const row = data[0];
         return {
             hwid: row.hwid || null,
@@ -81,6 +89,7 @@ async function fetchSingleLicense(licenseKey) {
             expiresAt: row.expires_at || null
         };
     } catch (e) {
+        console.error('[777 Auth] fetchSingleLicense error:', e.message);
         return null;
     }
 }
