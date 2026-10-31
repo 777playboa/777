@@ -108,16 +108,16 @@ async function fetchSingleLicense(licenseKey, retries = 2) {
 async function saveLicenseToSupabase(key, record) {
     if (!client) return false;
     try {
-        const { error } = await client.from(tableName).upsert({
+        const payload = {
             license_key: key,
             hwid: record.hwid || null,
             type: record.type || 'lifetime_premium',
             active: record.active !== false,
             discord_id: record.discordId || null,
-            notes: record.notes || '',
-            expires_at: record.expiresAt || null,
-            updated_at: new Date().toISOString()
-        });
+            notes: record.notes || record.note || '',
+            last_login: new Date().toISOString()
+        };
+        const { error } = await client.from(tableName).upsert(payload);
         if (error) {
             console.error(`[777 Auth] Failed to upsert license ${key} to Supabase:`, error.message);
             return false;
@@ -140,9 +140,8 @@ async function syncAllToSupabase(licensesMap) {
                 type: record.type || 'lifetime_premium',
                 active: record.active !== false,
                 discord_id: record.discordId || null,
-                notes: record.notes || '',
-                expires_at: record.expiresAt || null,
-                updated_at: new Date().toISOString()
+                notes: record.notes || record.note || '',
+                last_login: new Date().toISOString()
             });
         }
         if (rows.length === 0) return true;
