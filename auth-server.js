@@ -2072,8 +2072,8 @@ app.post('/v1/auth/hwid', async (req, res) => {
     });
     clearLicenseFailureStrikes(normalizedHwid);
     saveLicenses();
-    if (supabaseAdapter.isConfigured() && resolvedLicenseKey !== DEFAULT_DEMO_KEY) {
-        supabaseAdapter.saveLicenseToSupabase(resolvedLicenseKey, licenseData).catch((err) => {
+    if (supabaseAdapter.isConfigured() && foundLicenseKey !== DEFAULT_DEMO_KEY) {
+        supabaseAdapter.saveLicenseToSupabase(foundLicenseKey, licenseData).catch((err) => {
             console.error('[777 Auth] Failed to sync bound license to Supabase:', err.message);
         });
     }
