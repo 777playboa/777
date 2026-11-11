@@ -43,14 +43,47 @@ async function loadLicensesFromSupabase() {
         if (Array.isArray(data)) {
             for (const row of data) {
                 const cleanKey = (row.license_key || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-                map.set(cleanKey, {
-                    hwid: row.hwid || null,
-                    type: row.type || 'lifetime_premium',
-                    active: row.active !== false,
-                    discordId: row.discord_id || null,
-                    notes: row.notes || '',
-                    expiresAt: row.expires_at || null
-                });
+                if (!cleanKey) continue;
+
+                const existing = map.get(cleanKey);
+                if (existing) {
+                    // Merge duplicates:
+                    // Critical security: if EITHER row is marked inactive/revoked in Supabase,
+                    // the license MUST be treated as inactive (revoked)!
+                    const isActive = existing.active && (row.active !== false);
+                    // Prefer formatted key with hyphens as rawKey
+                    const rawKey = (row.license_key && row.license_key.includes('-'))
+                        ? row.license_key
+                        : (existing.rawKey || row.license_key);
+                    const hwid = row.hwid || existing.hwid || null;
+                    const discordId = row.discord_id || existing.discordId || null;
+                    const notes = row.notes || existing.notes || '';
+                    const type = row.type || existing.type || 'lifetime_premium';
+                    const expiresAt = row.expires_at || existing.expiresAt || null;
+                    const lastLogin = row.last_login || existing.lastLogin || null;
+
+                    map.set(cleanKey, {
+                        rawKey,
+                        hwid,
+                        type,
+                        active: isActive,
+                        discordId,
+                        notes,
+                        expiresAt,
+                        lastLogin
+                    });
+                } else {
+                    map.set(cleanKey, {
+                        rawKey: row.license_key || cleanKey,
+                        hwid: row.hwid || null,
+                        type: row.type || 'lifetime_premium',
+                        active: row.active !== false,
+                        discordId: row.discord_id || null,
+                        notes: row.notes || '',
+                        expiresAt: row.expires_at || null,
+                        lastLogin: row.last_login || null
+                    });
+                }
             }
         }
         console.log(`[777 Auth] Successfully synced ${map.size} licenses from Supabase (${tableName})`);
@@ -74,7 +107,7 @@ async function fetchSingleLicense(licenseKey, retries = 2) {
                 .from(tableName)
                 .select('*')
                 .or(`license_key.eq.${raw},license_key.eq.${cleanKey},license_key.eq.${formattedKey},license_key.ilike.${cleanKey},license_key.ilike.${formattedKey}`)
-                .limit(1);
+                .limit(5);
             if (error) {
                 console.error(`[777 Auth] Supabase fetchSingleLicense error (attempt ${attempt + 1}):`, error.message);
                 if (attempt < retries) {
@@ -84,14 +117,20 @@ async function fetchSingleLicense(licenseKey, retries = 2) {
                 return null;
             }
             if (!data || data.length === 0) return null;
-            const row = data[0];
+
+            // If ANY duplicate row is inactive, the license is treated as inactive
+            const anyInactive = data.some(r => r.active === false);
+            const bestRow = data.find(r => r.hwid) || data[0];
+
             return {
-                hwid: row.hwid || null,
-                type: row.type || 'lifetime_premium',
-                active: row.active !== false,
-                discordId: row.discord_id || null,
-                notes: row.notes || '',
-                expiresAt: row.expires_at || null
+                rawKey: bestRow.license_key,
+                hwid: bestRow.hwid || null,
+                type: bestRow.type || 'lifetime_premium',
+                active: !anyInactive,
+                discordId: bestRow.discord_id || null,
+                notes: bestRow.notes || '',
+                expiresAt: bestRow.expires_at || null,
+                lastLogin: bestRow.last_login || null
             };
         } catch (e) {
             console.error(`[777 Auth] fetchSingleLicense error (attempt ${attempt + 1}):`, e.message);
@@ -108,20 +147,37 @@ async function fetchSingleLicense(licenseKey, retries = 2) {
 async function saveLicenseToSupabase(key, record) {
     if (!client) return false;
     try {
+        const cleanKey = String(key).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        const formattedKey = cleanKey.length === 20
+            ? `${cleanKey.slice(0, 4)}-${cleanKey.slice(4, 8)}-${cleanKey.slice(8, 12)}-${cleanKey.slice(12, 16)}-${cleanKey.slice(16, 20)}`
+            : cleanKey;
+        const targetKey = record.rawKey || formattedKey;
+
         const payload = {
-            license_key: key,
+            license_key: targetKey,
             hwid: record.hwid || null,
-            type: record.type || 'lifetime_premium',
+            type: record.type || record.licenseType || 'lifetime_premium',
             active: record.active !== false,
             discord_id: record.discordId || null,
             notes: record.notes || record.note || '',
-            last_login: new Date().toISOString()
+            last_login: record.lastLogin || record.last_login || new Date().toISOString()
         };
         const { error } = await client.from(tableName).upsert(payload);
         if (error) {
-            console.error(`[777 Auth] Failed to upsert license ${key} to Supabase:`, error.message);
+            console.error(`[777 Auth] Failed to upsert license ${targetKey} to Supabase:`, error.message);
             return false;
         }
+
+        // If a duplicate unhyphenated row exists in Supabase, keep its status/hwid/last_login in sync as well
+        if (targetKey !== cleanKey) {
+            await client.from(tableName).update({
+                hwid: payload.hwid,
+                active: payload.active,
+                last_login: payload.last_login,
+                discord_id: payload.discord_id
+            }).eq('license_key', cleanKey);
+        }
+
         return true;
     } catch (e) {
         console.error(`[777 Auth] Error saving license ${key} to Supabase:`, e.message);
@@ -134,14 +190,21 @@ async function syncAllToSupabase(licensesMap) {
     try {
         const rows = [];
         for (const [key, record] of licensesMap.entries()) {
+            const cleanKey = String(key).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+            const formattedKey = cleanKey.length === 20
+                ? `${cleanKey.slice(0, 4)}-${cleanKey.slice(4, 8)}-${cleanKey.slice(8, 12)}-${cleanKey.slice(12, 16)}-${cleanKey.slice(16, 20)}`
+                : cleanKey;
+            const targetKey = record.rawKey || formattedKey;
+
             rows.push({
-                license_key: key,
+                license_key: targetKey,
                 hwid: record.hwid || null,
-                type: record.type || 'lifetime_premium',
+                type: record.type || record.licenseType || 'lifetime_premium',
                 active: record.active !== false,
                 discord_id: record.discordId || null,
                 notes: record.notes || record.note || '',
-                last_login: new Date().toISOString()
+                // PRESERVE real last_login instead of stamping now() on everyone!
+                last_login: record.lastLogin || record.last_login || null
             });
         }
         if (rows.length === 0) return true;

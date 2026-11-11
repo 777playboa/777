@@ -211,13 +211,13 @@ function writeJsonAtomic(filePath, obj) {
     fs.renameSync(tmp, filePath);
 }
 
-function saveLicenses() {
+function saveLicenses(skipSupabaseBatch = false) {
     try {
         const obj = {};
         for (const [k, v] of licenses) obj[k] = v;
         writeJsonAtomic(LICENSES_FILE, obj);
         licensesFileMtimeMs = fs.statSync(LICENSES_FILE).mtimeMs;
-        if (supabaseAdapter.isConfigured()) {
+        if (!skipSupabaseBatch && supabaseAdapter.isConfigured()) {
             supabaseAdapter.syncAllToSupabase(licenses).catch(e => {
                 console.error('[777 Auth] Supabase background sync error:', e.message);
             });
@@ -2071,7 +2071,7 @@ app.post('/v1/auth/hwid', async (req, res) => {
         machineGuid: typeof machineGuid === 'string' ? machineGuid : licenseData.machineGuid
     });
     clearLicenseFailureStrikes(normalizedHwid);
-    saveLicenses();
+    saveLicenses(true);
     if (supabaseAdapter.isConfigured() && foundLicenseKey !== DEFAULT_DEMO_KEY) {
         supabaseAdapter.saveLicenseToSupabase(foundLicenseKey, licenseData).catch((err) => {
             console.error('[777 Auth] Failed to sync bound license to Supabase:', err.message);
@@ -2486,7 +2486,7 @@ app.post('/v1/auth', async (req, res) => {
         machineGuid: typeof machineGuid === 'string' ? machineGuid : licenseData.machineGuid
     });
     clearLicenseFailureStrikes(normalizedHwid);
-    saveLicenses();
+    saveLicenses(true);
     if (supabaseAdapter.isConfigured() && resolvedLicenseKey !== DEFAULT_DEMO_KEY) {
         supabaseAdapter.saveLicenseToSupabase(resolvedLicenseKey, licenseData).catch((err) => {
             console.error('[777 Auth] Failed to sync bound license to Supabase:', err.message);
